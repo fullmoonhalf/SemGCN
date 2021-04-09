@@ -63,7 +63,9 @@ if __name__ == '__main__':
                     continue  # Discard corrupted video
 
                 with h5py.File(f) as hf:
-                    positions = hf['3D_positions'].value.reshape(32, 3, -1).transpose(2, 0, 1)
+                    #positions = hf['3D_positions'].value.reshape(32, 3, -1).transpose(2, 0, 1)
+                    npposlist = np.array( hf['3D_positions'] )
+                    positions = npposlist.reshape(32, 3, -1).transpose(2, 0, 1)
                     positions /= 1000  # Meters instead of millimeters
                     output[subject][action] = positions.astype('float32')
 
