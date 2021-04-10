@@ -55,6 +55,21 @@ def parse_args():
     return args
 
 
+def rename_nonlocal_node(dic):
+    if 'items' not in dir(dic):
+        return
+    targets = []
+    for key, value in dic.items():
+        if type(key) == str:
+            if '.nonlocal.' in key:
+                targets.append(key)
+        rename_nonlocal_node(value)
+    for key in targets:
+        value = dic.pop(key)
+        key = key.replace('.nonlocal.','._nonlocal.')
+        dic[key] = value
+
+
 def main(args):
     print('==> Using settings {}'.format(args))
 
@@ -101,6 +116,7 @@ def main(args):
     if path.isfile(ckpt_path):
         print("==> Loading checkpoint '{}'".format(ckpt_path))
         ckpt = torch.load(ckpt_path)
+        rename_nonlocal_node(ckpt)
         start_epoch = ckpt['epoch']
         error_best = ckpt['error']
         model_pos.load_state_dict(ckpt['state_dict'])
