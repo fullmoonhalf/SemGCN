@@ -1,0 +1,14 @@
+
+checkpoint/pretrained/ckpt_linear.pth.tar
+checkpoint/pretrained/ckpt_linear_sh.pth.tar
+checkpoint/pretrained/ckpt_semgcn.pth.tar
+checkpoint/pretrained/ckpt_semgcn_nonlocal.pth.tar
+checkpoint/pretrained/ckpt_semgcn_nonlocal_sh.pth.tar
+data/data_2d_h36m_gt.npz
+data/data_2d_h36m_sh_ft_h36m.npz
+data/data_2d_h36m_sh_pt_mpii.npz
+data/data_3d_h36m.npz
+data/h36m.zip
+data/stacked_hourglass_fined_tuned_240.tar.gz
+*.pyc
+output.gif
