@@ -12,3 +12,5 @@ data/h36m.zip
 data/stacked_hourglass_fined_tuned_240.tar.gz
 *.pyc
 output.gif
+*.h5
+*.bat
