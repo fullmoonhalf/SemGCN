@@ -3,6 +3,7 @@ import cv2
 import time
 import torch
 import os.path as path
+import numpy as np
 
 
 from mmdet.apis import inference_detector, init_detector
@@ -63,12 +64,12 @@ def main(args):
         if not flag:
             break
 
-        vis_img = mmpose_driver.update(img)
-        semgcm_driver.update()
+        mmpose_driver.update(img)
+        semgcm_driver.update(mmpose_driver.getLastPoseResult())
 
         if args.cv_show:
-            cv2.putText(vis_img, "{} fps".format(int(last_fps)), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
-            cv2.imshow('Image', vis_img)
+            cv2.putText(img, "{} fps".format(int(last_fps)), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
+            cv2.imshow('Image', img)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
         frame_tail = time.time()
@@ -98,6 +99,11 @@ class MMPoseDriver:
         self.kpt_thr = args.mmp_kpt_thr
         self.return_heatmap = False
         self.output_layer_names = None
+        self.last_pose_results = None
+        self.last_returned_outputs = None
+        self.last_converted_results = None
+        self.coco_to_sem = [[12,13],[13],[15],[17],[12],[14],[16],[12,13],[6,7],[1],[7],[9],[11],[6],[8],[10]]
+        self.device = device
         print("Initialize MMPoseDriver - end.")
 
     def update(self, img):
@@ -106,7 +112,7 @@ class MMPoseDriver:
         # keep the person class bounding boxes.
         person_bboxes = self.process_mmdet_results(mmdet_results)
         # test a single image, with a list of bboxes.
-        pose_results, returned_outputs = inference_top_down_pose_model(
+        self.last_pose_results, self.last_returned_outputs = inference_top_down_pose_model(
             self.pose_model,
             img,
             person_bboxes,
@@ -115,25 +121,36 @@ class MMPoseDriver:
             dataset=self.dataset,
             return_heatmap=self.return_heatmap,
             outputs=self.output_layer_names)
+        
 
-        # show the results
-        vis_img = vis_pose_result(
-            self.pose_model,
-            img,
-            pose_results,
-            dataset=self.dataset,
-            kpt_score_thr=self.kpt_thr,
-            show=False)
+    def getLastPoseResult(self):
+        if self.last_pose_results is None:
+            self.last_converted_results = None
+        population = len(self.last_pose_results)
+        self.last_converted_results = []
+        for index in range(population):
+            bbox = self.last_pose_results[index]['bbox']
+            cx = (bbox[0][2] + bbox[0][0]) / 2
+            cy = (bbox[0][3] + bbox[0][1]) / 2
+            width = bbox[0][2] - bbox[0][0] / 2
+            height = bbox[0][3] - bbox[0][1] / 2    
+            keypoint = self.last_pose_results[index]['keypoints']
+            result = []
+            for cl in self.coco_to_sem:
+                point = [0.0, 0.0]
+                for c in cl:
+                    point[0] = point[0] + keypoint[c][0]
+                    point[1] = point[1] + keypoint[c][1]
+                cn = len(cl)
+                point[0] = ((point[0] / cn) - cx) / width
+                point[1] = ((point[1] / cn) - cy) / height
+                result.append(point)
+            result = torch.tensor(result).float().to(self.device.device)
+            self.last_converted_results.append(result)
+        return self.last_converted_results
 
-        return vis_img
 
     def process_mmdet_results(self, mmdet_results, cat_id=0):
-        """Process mmdet results, and return a list of bboxes.
-
-        :param mmdet_results:
-        :param cat_id: category id (default: 0 for human)
-        :return: a list of detected bounding boxes
-        """
         if isinstance(mmdet_results, tuple):
             det_results = mmdet_results[0]
         else:
@@ -165,6 +182,7 @@ class SemGCMDriver:
             p_dropout=self.p_dropout,
             nodes_group=self.skeleton.joints_group()
         ).to(self.device.device)
+        self.last_3d_positions = None
 
         # Resume from a checkpoint
         ckpt_path = args.sem_evaluate
@@ -180,8 +198,16 @@ class SemGCMDriver:
             raise RuntimeError("==> No checkpoint found at '{}'".format(ckpt_path))
         print("Initialize SemGCMDriver - end.")
 
-    def update(self):
-        pass
+    def update(self, lastPoseResult):
+        self.last_3d_positions = None
+        if lastPoseResult is None:
+            return
+        self.last_3d_positions = []
+        for input2d in lastPoseResult:
+            result = self.model_pos(input2d).cpu()
+            self.last_3d_positions.append(result)
+        print(self.last_3d_positions)
+
 
     def rename_nonlocal_node(self, dic):
         if 'items' not in dir(dic):
