@@ -68,8 +68,10 @@ def main(args):
         semgcm_driver.update(mmpose_driver.getLastPoseResult())
 
         if args.cv_show:
-            cv2.putText(img, "{} fps".format(int(last_fps)), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
-            cv2.imshow('Image', img)
+            drawimg = img
+            semgcm_driver.render(drawimg)
+            cv2.putText(drawimg, "{} fps".format(int(last_fps)), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
+            cv2.imshow('Image', drawimg)
         if cv2.waitKey(1) & 0xFF == ord('q'):
             break
         frame_tail = time.time()
@@ -206,7 +208,20 @@ class SemGCMDriver:
         for input2d in lastPoseResult:
             result = self.model_pos(input2d).cpu()
             self.last_3d_positions.append(result)
-        print(self.last_3d_positions)
+
+
+    def render(self, img):
+        if self.last_3d_positions is None:
+            return
+        for position in self.last_3d_positions:
+            for node, parent in enumerate(self.skeleton._parents):
+                if parent < 0:
+                    continue
+                nx = position[0][node][0] * 100 + 100
+                ny = position[0][node][1] * 100 + 100
+                px = position[0][parent][0] * 100 + 100
+                py = position[0][parent][1] * 100 + 100
+                cv2.line(img,(nx,ny),(px,py),(255,255,0),1)
 
 
     def rename_nonlocal_node(self, dic):
