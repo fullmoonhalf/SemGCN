@@ -132,7 +132,24 @@ class MMPoseDriver:
         self.last_converted_results = None
         self.last_raw_results = None
         self.last_scores = None
-        self.coco_to_sem = [[12,13],[13],[15],[17],[12],[14],[16],[12,13],[6,7],[1],[7],[9],[11],[6],[8],[10]]
+        self.coco_to_sem = [
+            [11,12],        # sem 00: 'Hip'
+            [11],           # sem 01: 'RHip' 
+            [13],           # sem 02: 'RKnee' 
+            [15],           # sem 03: 'RFoot' 
+            [12],           # sem 04: 'LHip' 
+            [14],           # sem 05: 'LKnee' 
+            [16],           # sem 06: 'LFoot' 
+            [5,6,11,12],    # sem 07: 'Spine' 
+            [5,6],          # sem 08: 'Thorax' 
+            [0],            # sem 09: 'Head' 
+            [6],            # sem 10: 'LShoulder' 
+            [8],            # sem 11: 'LElbow' 
+            [10],           # sem 12: 'LWrist' 
+            [5],            # sem 13: 'RShoulder' 
+            [7],            # sem 14: 'RElbow' 
+            [9]             # sem 15: 'RWrist' 
+        ]
         self.device = device
         self.render_mmp = args.mmp_show_mmp
         self.render_2d = args.mmp_show_2d
@@ -198,20 +215,21 @@ class MMPoseDriver:
         return img
 
     def __render_mmp(self, img):
-        if self.render_mmp:
-            img = vis_pose_result(
-                self.pose_model,
-                img,
-                self.last_pose_results,
-                dataset=self.dataset,
-                kpt_score_thr=self.kpt_thr,
-                show=False)
+        if self.render_mmp and self.last_pose_results:
+            img = vis_pose_result(self.pose_model, img, self.last_pose_results, dataset=self.dataset, kpt_score_thr=self.kpt_thr, show=False)
+            for result in self.last_pose_results:
+                kp = result['keypoints']
+                for i, p in enumerate(kp):
+                    if i > 16:
+                        break
+                    x = int(p[0])
+                    y = int(p[1])
+                    cv2.putText(img, "{}".format(i), (x, y), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (255,255,255), 1, cv2.LINE_AA)
         return img
 
     def __render_2d(self, img):
         if self.render_2d and self.last_raw_results:
             for index, position in enumerate(self.last_raw_results):
-                print(position)
                 for node, parent in enumerate(self.skeleton._parents):
                     if parent < 0:
                         continue
