@@ -134,21 +134,21 @@ class MMPoseDriver:
         self.last_scores = None
         self.coco_to_sem = [
             [11,12],        # sem 00: 'Hip'
-            [11],           # sem 01: 'RHip' 
-            [13],           # sem 02: 'RKnee' 
-            [15],           # sem 03: 'RFoot' 
-            [12],           # sem 04: 'LHip' 
-            [14],           # sem 05: 'LKnee' 
-            [16],           # sem 06: 'LFoot' 
+            [12],           # sem 01: 'RHip' 
+            [14],           # sem 02: 'RKnee' 
+            [16],           # sem 03: 'RFoot' 
+            [11],           # sem 04: 'LHip' 
+            [13],           # sem 05: 'LKnee' 
+            [15],           # sem 06: 'LFoot' 
             [5,6,11,12],    # sem 07: 'Spine' 
             [5,6],          # sem 08: 'Thorax' 
             [0],            # sem 09: 'Head' 
-            [6],            # sem 10: 'LShoulder' 
-            [8],            # sem 11: 'LElbow' 
-            [10],           # sem 12: 'LWrist' 
-            [5],            # sem 13: 'RShoulder' 
-            [7],            # sem 14: 'RElbow' 
-            [9]             # sem 15: 'RWrist' 
+            [5],            # sem 10: 'LShoulder' 
+            [7],            # sem 11: 'LElbow' 
+            [9],           # sem 12: 'LWrist' 
+            [6],            # sem 13: 'RShoulder' 
+            [8],            # sem 14: 'RElbow' 
+            [10]             # sem 15: 'RWrist' 
         ]
         self.device = device
         self.render_mmp = args.mmp_show_mmp
