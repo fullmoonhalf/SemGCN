@@ -137,6 +137,7 @@ class MMPoseDriver:
         self.render_mmp = args.mmp_show_mmp
         self.render_2d = args.mmp_show_2d
         self.skeleton = skeleton
+        self.render_score_threshold = args.render_score_threshold
         print("Initialize MMPoseDriver - end.")
 
     def update(self, img):
@@ -208,8 +209,20 @@ class MMPoseDriver:
         return img
 
     def __render_2d(self, img):
-        if self.render_2d and self.last_pose_results:
-            pass
+        if self.render_2d and self.last_raw_results:
+            for index, position in enumerate(self.last_raw_results):
+                print(position)
+                for node, parent in enumerate(self.skeleton._parents):
+                    if parent < 0:
+                        continue
+                    color = (255,0,0)
+                    if self.last_scores[index][node] > self.render_score_threshold and self.last_scores[index][parent] > self.render_score_threshold:
+                        color = (255,255,0)
+                    nx = int(position[node][0])
+                    ny = int(position[node][1])
+                    px = int(position[parent][0])
+                    py = int(position[parent][1])
+                    cv2.line(img,(nx,ny),(px,py),color,1)
         return img
 
     def getLastPoseResult(self):
