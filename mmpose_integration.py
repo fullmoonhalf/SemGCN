@@ -24,13 +24,14 @@ def parse_args():
     parser.add_argument('--mmp-device', default='cuda:0', help='Device used for inference')
     parser.add_argument('--mmp-bbox-thr', type=float, default=0.3, help='Bounding box score threshold')
     parser.add_argument('--mmp-kpt-thr', type=float, default=0.3, help='Keypoint score threshold')
-    parser.add_argument('--mmp-show', action='store_true')
+    parser.add_argument('--mmp-show-mmp', action='store_true')
+    parser.add_argument('--mmp-show-2d', action='store_true')
 
     parser.add_argument('--sem-dropout', default=0.0, type=float, help='dropout rate')
     parser.add_argument('--sem-num_layers', default=4, type=int, metavar='N', help='num of residual layers')
     parser.add_argument('--sem-hid_dim', default=128, type=int, metavar='N', help='num of hidden dimensions')
     parser.add_argument('--sem-evaluate', default='', type=str, metavar='FILENAME', required=True, help='checkpoint to evaluate (file name)')
-    parser.add_argument('--sem-show', action='store_true')
+    parser.add_argument('--sem-show-3d', action='store_true')
 
     parser.add_argument('--device', default='cuda:0', help='Device used for inference')
     parser.add_argument('--render-score-threshold', type=float, default=0.5)
@@ -59,9 +60,19 @@ class Application:
         else:
             self.cap = cv2.VideoCapture(args.cv_video_path)
 
+        # setup skeleton
+        from common.skeleton import Skeleton
+        self.skeleton = Skeleton(
+            parents=[-1, 0, 1, 2, 0, 4, 5, 0, 7, 8, 8, 10, 11, 8, 13, 14 ],
+            joints_left=[4, 5, 6, 10, 11, 12],
+            joints_right=[1, 2, 3, 13, 14, 15]
+        )
+        self.skeleton._joints_group = [[2, 3], [5, 6], [1, 4], [0, 7], [8, 9], [14, 15], [11, 12], [10, 13]]
+
+        # setup drivers
         self.device_driver = DeviceDriver(args)
-        self.mmpose_driver = MMPoseDriver(args, self.device_driver)
-        self.semgcm_driver = SemGCMDriver(args, self.device_driver)
+        self.mmpose_driver = MMPoseDriver(args, self.device_driver, self.skeleton)
+        self.semgcm_driver = SemGCMDriver(args, self.device_driver, self.skeleton)
 
     def update(self):
         # main loop.
@@ -83,8 +94,8 @@ class Application:
 
             if self.args.cv_show:
                 drawimg = img
-                drawimg = self.mmpose_driver.render(drawimg) if self.args.mmp_show else drawimg
-                drawimg = self.semgcm_driver.render(drawimg) if self.args.sem_show else drawimg
+                drawimg = self.mmpose_driver.render(drawimg)
+                drawimg = self.semgcm_driver.render(drawimg)
                 cv2.putText(drawimg, "frame{} : {} fps".format(count, int(last_fps)), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
                 cv2.imshow('Image', drawimg)
             if cv2.waitKey(1) & 0xFF == ord('q'):
@@ -97,8 +108,6 @@ class Application:
         cv2.destroyAllWindows()
 
 
-
-
 class DeviceDriver:
     def __init__(self, args):
         print("Initialize DeviceDriver - begin.")
@@ -109,7 +118,7 @@ class DeviceDriver:
 
 
 class MMPoseDriver:
-    def __init__(self, args, device):
+    def __init__(self, args, device, skeleton):
         print("Initialize MMPoseDriver - begin.")
         self.det_model = init_detector(args.mmp_det_config, args.mmp_det_checkpoint, device=device.name)
         self.pose_model = init_pose_model(args.mmp_pose_config, args.mmp_pose_checkpoint, device=device.name)
@@ -121,9 +130,13 @@ class MMPoseDriver:
         self.last_pose_results = None
         self.last_returned_outputs = None
         self.last_converted_results = None
+        self.last_raw_results = None
         self.last_scores = None
         self.coco_to_sem = [[12,13],[13],[15],[17],[12],[14],[16],[12,13],[6,7],[1],[7],[9],[11],[6],[8],[10]]
         self.device = device
+        self.render_mmp = args.mmp_show_mmp
+        self.render_2d = args.mmp_show_2d
+        self.skeleton = skeleton
         print("Initialize MMPoseDriver - end.")
 
     def update(self, img):
@@ -142,23 +155,8 @@ class MMPoseDriver:
             return_heatmap=self.return_heatmap,
             outputs=self.output_layer_names)
 
-    def render(self, img):
-        vis_img = vis_pose_result(
-            self.pose_model,
-            img,
-            self.last_pose_results,
-            dataset=self.dataset,
-            kpt_score_thr=self.kpt_thr,
-            show=False)
-        return vis_img
-        
-
-    def getLastPoseResult(self):
-        self.last_converted_results = None
-        self.last_scores = None
-        if self.last_pose_results is None:
-            return
         population = len(self.last_pose_results)
+        self.last_raw_results = []
         self.last_converted_results = []
         self.last_scores = []
         for index in range(population):
@@ -168,26 +166,54 @@ class MMPoseDriver:
             width = bbox[0][2] - bbox[0][0] / 2
             height = bbox[0][3] - bbox[0][1] / 2    
             keypoint = self.last_pose_results[index]['keypoints']
+            rawret = []
             result = []
             scores = []
             for cl in self.coco_to_sem:
-                point = [0.0, 0.0]
+                rawpt = [0.0, 0.0]
                 score = 0
                 for c in cl:
-                    point[0] = point[0] + keypoint[c][0]
-                    point[1] = point[1] + keypoint[c][1]
+                    rawpt[0] = rawpt[0] + keypoint[c][0]
+                    rawpt[1] = rawpt[1] + keypoint[c][1]
                     score = score + keypoint[c][2]
                 cn = len(cl)
-                point[0] = ((point[0] / cn) - cx) / width
-                point[1] = ((point[1] / cn) - cy) / height
+                rawpt[0] = rawpt[0] / cn
+                rawpt[1] = rawpt[1] / cn
+                point = [0.0, 0.0]
+                point[0] = ((rawpt[0] / cn) - cx) / width
+                point[1] = ((rawpt[1] / cn) - cy) / height
                 score = score / cn
+                rawret.append(rawpt)
                 result.append(point)
                 scores.append(score)
             result = torch.tensor(result).float().to(self.device.device)
+            self.last_raw_results.append(rawret)
             self.last_converted_results.append(result)
             self.last_scores.append(scores)
-        return self.last_converted_results, self.last_scores
 
+    def render(self, img):
+        img = self.__render_mmp(img)
+        img = self.__render_2d(img)
+        return img
+
+    def __render_mmp(self, img):
+        if self.render_mmp:
+            img = vis_pose_result(
+                self.pose_model,
+                img,
+                self.last_pose_results,
+                dataset=self.dataset,
+                kpt_score_thr=self.kpt_thr,
+                show=False)
+        return img
+
+    def __render_2d(self, img):
+        if self.render_2d and self.last_pose_results:
+            pass
+        return img
+
+    def getLastPoseResult(self):
+        return self.last_converted_results, self.last_scores
 
     def process_mmdet_results(self, mmdet_results, cat_id=0):
         if isinstance(mmdet_results, tuple):
@@ -198,21 +224,15 @@ class MMPoseDriver:
 
 
 class SemGCMDriver:
-    def __init__(self, args, device):
+    def __init__(self, args, device, skeleton):
         print("Initialize SemGCMDriver - begin.")
         from models.sem_gcn import SemGCN
         from common.graph_utils import adj_mx_from_skeleton
-        from common.skeleton import Skeleton
         self.hid_dim = args.sem_hid_dim
         self.num_layers = args.sem_num_layers
         self.p_dropout = (None if args.sem_dropout == 0.0 else args.sem_dropout)
         self.render_score_threshold = args.render_score_threshold
-        self.skeleton = Skeleton(
-            parents=[-1, 0, 1, 2, 0, 4, 5, 0, 7, 8, 8, 10, 11, 8, 13, 14 ],
-            joints_left=[4, 5, 6, 10, 11, 12],
-            joints_right=[1, 2, 3, 13, 14, 15]
-        )
-        self.skeleton._joints_group = [[2, 3], [5, 6], [1, 4], [0, 7], [8, 9], [14, 15], [11, 12], [10, 13]]
+        self.skeleton = skeleton
         adj = adj_mx_from_skeleton(self.skeleton)
         self.device = device
         self.model_pos = SemGCN(
@@ -222,8 +242,10 @@ class SemGCMDriver:
             p_dropout=self.p_dropout,
             nodes_group=self.skeleton.joints_group()
         ).to(self.device.device)
+        self.last_2d_positions = None
         self.last_3d_positions = None
         self.last_scores = None
+        self.render_3d = args.sem_show_3d
 
         # Resume from a checkpoint
         ckpt_path = args.sem_evaluate
@@ -240,19 +262,21 @@ class SemGCMDriver:
         print("Initialize SemGCMDriver - end.")
 
     def update(self, mmpose):
-        lastPoseResult, scores = mmpose.getLastPoseResult()
+        self.last_2d_positions, self.last_scores = mmpose.getLastPoseResult()
         self.last_3d_positions = None
-        self.last_scores = scores
-        if lastPoseResult is None:
+        if self.last_2d_positions is None:
             return
         self.last_3d_positions = []
-        for input2d in lastPoseResult:
+        for input2d in self.last_2d_positions:
             result = self.model_pos(input2d).cpu()
             self.last_3d_positions.append(result)
 
-
     def render(self, img):
-        if self.last_3d_positions is not None:
+        img = self.__render_3d(img)
+        return img
+
+    def __render_3d(self, img):
+        if self.render_3d and self.last_3d_positions:
             for index, position in enumerate(self.last_3d_positions):
                 for node, parent in enumerate(self.skeleton._parents):
                     if parent < 0:
@@ -266,7 +290,6 @@ class SemGCMDriver:
                     py = position[0][parent][1] * 100 + 100
                     cv2.line(img,(nx,ny),(px,py),color,1)
         return img
-
 
     def rename_nonlocal_node(self, dic):
         if 'items' not in dir(dic):
