@@ -31,7 +31,7 @@ def parse_args():
     parser.add_argument('--sem-evaluate', default='', type=str, metavar='FILENAME', required=True, help='checkpoint to evaluate (file name)')
 
     parser.add_argument('--device', default='cuda:0', help='Device used for inference')
-
+    parser.add_argument('--render-score-threshold', type=float, default=0.5)
 
     args = parser.parse_args()
     return args
@@ -65,7 +65,7 @@ def main(args):
             break
 
         mmpose_driver.update(img)
-        semgcm_driver.update(mmpose_driver.getLastPoseResult())
+        semgcm_driver.update(mmpose_driver)
 
         if args.cv_show:
             drawimg = img
@@ -104,6 +104,7 @@ class MMPoseDriver:
         self.last_pose_results = None
         self.last_returned_outputs = None
         self.last_converted_results = None
+        self.last_scores = None
         self.coco_to_sem = [[12,13],[13],[15],[17],[12],[14],[16],[12,13],[6,7],[1],[7],[9],[11],[6],[8],[10]]
         self.device = device
         print("Initialize MMPoseDriver - end.")
@@ -126,10 +127,13 @@ class MMPoseDriver:
         
 
     def getLastPoseResult(self):
+        self.last_converted_results = None
+        self.last_scores = None
         if self.last_pose_results is None:
-            self.last_converted_results = None
+            return
         population = len(self.last_pose_results)
         self.last_converted_results = []
+        self.last_scores = []
         for index in range(population):
             bbox = self.last_pose_results[index]['bbox']
             cx = (bbox[0][2] + bbox[0][0]) / 2
@@ -138,18 +142,24 @@ class MMPoseDriver:
             height = bbox[0][3] - bbox[0][1] / 2    
             keypoint = self.last_pose_results[index]['keypoints']
             result = []
+            scores = []
             for cl in self.coco_to_sem:
                 point = [0.0, 0.0]
+                score = 0
                 for c in cl:
                     point[0] = point[0] + keypoint[c][0]
                     point[1] = point[1] + keypoint[c][1]
+                    score = score + keypoint[c][2]
                 cn = len(cl)
                 point[0] = ((point[0] / cn) - cx) / width
                 point[1] = ((point[1] / cn) - cy) / height
+                score = score / cn
                 result.append(point)
+                scores.append(score)
             result = torch.tensor(result).float().to(self.device.device)
             self.last_converted_results.append(result)
-        return self.last_converted_results
+            self.last_scores.append(scores)
+        return self.last_converted_results, self.last_scores
 
 
     def process_mmdet_results(self, mmdet_results, cat_id=0):
@@ -169,6 +179,7 @@ class SemGCMDriver:
         self.hid_dim = args.sem_hid_dim
         self.num_layers = args.sem_num_layers
         self.p_dropout = (None if args.sem_dropout == 0.0 else args.sem_dropout)
+        self.render_score_threshold = args.render_score_threshold
         self.skeleton = Skeleton(
             parents=[-1, 0, 1, 2, 0, 4, 5, 0, 7, 8, 8, 10, 11, 8, 13, 14 ],
             joints_left=[4, 5, 6, 10, 11, 12],
@@ -185,6 +196,7 @@ class SemGCMDriver:
             nodes_group=self.skeleton.joints_group()
         ).to(self.device.device)
         self.last_3d_positions = None
+        self.last_scores = None
 
         # Resume from a checkpoint
         ckpt_path = args.sem_evaluate
@@ -200,8 +212,10 @@ class SemGCMDriver:
             raise RuntimeError("==> No checkpoint found at '{}'".format(ckpt_path))
         print("Initialize SemGCMDriver - end.")
 
-    def update(self, lastPoseResult):
+    def update(self, mmpose):
+        lastPoseResult, scores = mmpose.getLastPoseResult()
         self.last_3d_positions = None
+        self.last_scores = scores
         if lastPoseResult is None:
             return
         self.last_3d_positions = []
@@ -213,15 +227,18 @@ class SemGCMDriver:
     def render(self, img):
         if self.last_3d_positions is None:
             return
-        for position in self.last_3d_positions:
+        for index, position in enumerate(self.last_3d_positions):
             for node, parent in enumerate(self.skeleton._parents):
                 if parent < 0:
                     continue
+                color = (255,0,0)
+                if self.last_scores[index][node] > self.render_score_threshold and self.last_scores[index][parent] > self.render_score_threshold:
+                    color = (255,255,0)
                 nx = position[0][node][0] * 100 + 100
                 ny = position[0][node][1] * 100 + 100
                 px = position[0][parent][0] * 100 + 100
                 py = position[0][parent][1] * 100 + 100
-                cv2.line(img,(nx,ny),(px,py),(255,255,0),1)
+                cv2.line(img,(nx,ny),(px,py),color,1)
 
 
     def rename_nonlocal_node(self, dic):
