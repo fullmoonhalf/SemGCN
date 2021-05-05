@@ -14,7 +14,7 @@ def parse_args():
     parser = argparse.ArgumentParser(description='SemGEN and MMpose combined demo.')
 
     parser.add_argument('--cv-camera-index', type=int)
-    parser.add_argument('--cv-video-path')
+    parser.add_argument('--cv-video-path', type=str)
     parser.add_argument('--cv-show', action='store_true')
 
     parser.add_argument('--mmp-det-config', help='Config file for detection', required=True)
