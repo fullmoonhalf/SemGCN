@@ -24,11 +24,13 @@ def parse_args():
     parser.add_argument('--mmp-device', default='cuda:0', help='Device used for inference')
     parser.add_argument('--mmp-bbox-thr', type=float, default=0.3, help='Bounding box score threshold')
     parser.add_argument('--mmp-kpt-thr', type=float, default=0.3, help='Keypoint score threshold')
+    parser.add_argument('--mmp-show', action='store_true')
 
     parser.add_argument('--sem-dropout', default=0.0, type=float, help='dropout rate')
     parser.add_argument('--sem-num_layers', default=4, type=int, metavar='N', help='num of residual layers')
     parser.add_argument('--sem-hid_dim', default=128, type=int, metavar='N', help='num of hidden dimensions')
     parser.add_argument('--sem-evaluate', default='', type=str, metavar='FILENAME', required=True, help='checkpoint to evaluate (file name)')
+    parser.add_argument('--sem-show', action='store_true')
 
     parser.add_argument('--device', default='cuda:0', help='Device used for inference')
     parser.add_argument('--render-score-threshold', type=float, default=0.5)
@@ -36,50 +38,65 @@ def parse_args():
     args = parser.parse_args()
     return args
 
+
 def main(args):
-    print("Application Entry.")
-    assert args.cv_camera_index is not None or args.cv_video_path is not None
+    app = Application(args)
+    app.update()
+    app.term()
 
-    # initialize.
-    print("Initialize.")
-    cap = None
-    if args.cv_camera_index is not None:
-        cap = cv2.VideoCapture(args.cv_camera_index)
-    else:
-        cap = cv2.VideoCapture(args.cv_video_path)
 
-    device_driver = DeviceDriver(args)
-    mmpose_driver = MMPoseDriver(args, device_driver)
-    semgcm_driver = SemGCMDriver(args, device_driver)
+class Application:
+    def __init__(self, args):
+        print("Application Entry.")
+        self.args = args
+        assert args.cv_camera_index is not None or args.cv_video_path is not None
 
-    # main loop.
-    print("Main Loop")
-    frame_head = 0.0
-    frame_tail = 0.0
-    while (cap.isOpened()):
-        last_elapsed = frame_tail - frame_head + 0.00001
-        last_fps = 1.0 / last_elapsed
-        frame_head = time.time()
-        flag, img = cap.read()
-        if not flag:
-            break
+        # initialize.
+        print("Initialize.")
+        self.cap = None
+        if args.cv_camera_index is not None:
+            self.cap = cv2.VideoCapture(args.cv_camera_index)
+        else:
+            self.cap = cv2.VideoCapture(args.cv_video_path)
 
-        mmpose_driver.update(img)
-        semgcm_driver.update(mmpose_driver)
+        self.device_driver = DeviceDriver(args)
+        self.mmpose_driver = MMPoseDriver(args, self.device_driver)
+        self.semgcm_driver = SemGCMDriver(args, self.device_driver)
 
-        if args.cv_show:
-            drawimg = img
-            semgcm_driver.render(drawimg)
-            cv2.putText(drawimg, "{} fps".format(int(last_fps)), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
-            cv2.imshow('Image', drawimg)
-        if cv2.waitKey(1) & 0xFF == ord('q'):
-            break
-        frame_tail = time.time()
+    def update(self):
+        # main loop.
+        print("Main Loop")
+        frame_head = 0.0
+        frame_tail = 0.0
+        count = 0
+        while (self.cap.isOpened()):
+            count = count + 1
+            last_elapsed = frame_tail - frame_head + 0.00001
+            last_fps = 1.0 / last_elapsed
+            frame_head = time.time()
+            flag, img = self.cap.read()
+            if not flag:
+                break
 
-    # Terminate.
-    print("Exit Application.")
-    cap.release()
-    cv2.destroyAllWindows()
+            self.mmpose_driver.update(img)
+            self.semgcm_driver.update(self.mmpose_driver)
+
+            if self.args.cv_show:
+                drawimg = img
+                drawimg = self.mmpose_driver.render(drawimg) if self.args.mmp_show else drawimg
+                drawimg = self.semgcm_driver.render(drawimg) if self.args.sem_show else drawimg
+                cv2.putText(drawimg, "frame{} : {} fps".format(count, int(last_fps)), (20, 20), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255,255,255), 2, cv2.LINE_AA)
+                cv2.imshow('Image', drawimg)
+            if cv2.waitKey(1) & 0xFF == ord('q'):
+                break
+            frame_tail = time.time()
+
+    def term(self):
+        print("Exit Application.")
+        self.cap.release()
+        cv2.destroyAllWindows()
+
+
 
 
 class DeviceDriver:
@@ -124,6 +141,16 @@ class MMPoseDriver:
             dataset=self.dataset,
             return_heatmap=self.return_heatmap,
             outputs=self.output_layer_names)
+
+    def render(self, img):
+        vis_img = vis_pose_result(
+            self.pose_model,
+            img,
+            self.last_pose_results,
+            dataset=self.dataset,
+            kpt_score_thr=self.kpt_thr,
+            show=False)
+        return vis_img
         
 
     def getLastPoseResult(self):
@@ -225,20 +252,20 @@ class SemGCMDriver:
 
 
     def render(self, img):
-        if self.last_3d_positions is None:
-            return
-        for index, position in enumerate(self.last_3d_positions):
-            for node, parent in enumerate(self.skeleton._parents):
-                if parent < 0:
-                    continue
-                color = (255,0,0)
-                if self.last_scores[index][node] > self.render_score_threshold and self.last_scores[index][parent] > self.render_score_threshold:
-                    color = (255,255,0)
-                nx = position[0][node][0] * 100 + 100
-                ny = position[0][node][1] * 100 + 100
-                px = position[0][parent][0] * 100 + 100
-                py = position[0][parent][1] * 100 + 100
-                cv2.line(img,(nx,ny),(px,py),color,1)
+        if self.last_3d_positions is not None:
+            for index, position in enumerate(self.last_3d_positions):
+                for node, parent in enumerate(self.skeleton._parents):
+                    if parent < 0:
+                        continue
+                    color = (255,0,0)
+                    if self.last_scores[index][node] > self.render_score_threshold and self.last_scores[index][parent] > self.render_score_threshold:
+                        color = (255,255,0)
+                    nx = position[0][node][0] * 100 + 100
+                    ny = position[0][node][1] * 100 + 100
+                    px = position[0][parent][0] * 100 + 100
+                    py = position[0][parent][1] * 100 + 100
+                    cv2.line(img,(nx,ny),(px,py),color,1)
+        return img
 
 
     def rename_nonlocal_node(self, dic):
