@@ -4,7 +4,7 @@ import time
 import torch
 import os.path as path
 import numpy as np
-
+import matplotlib.pyplot as plt
 
 from mmdet.apis import inference_detector, init_detector
 from mmpose.apis import inference_top_down_pose_model, init_pose_model, vis_pose_result
@@ -32,6 +32,7 @@ def parse_args():
     parser.add_argument('--sem-hid_dim', default=128, type=int, metavar='N', help='num of hidden dimensions')
     parser.add_argument('--sem-evaluate', default='', type=str, metavar='FILENAME', required=True, help='checkpoint to evaluate (file name)')
     parser.add_argument('--sem-show-3d', action='store_true')
+    parser.add_argument('--sem-plot', action='store_true')
 
     parser.add_argument('--device', default='cuda:0', help='Device used for inference')
     parser.add_argument('--render-score-threshold', type=float, default=0.5)
@@ -92,6 +93,8 @@ class Application:
             self.mmpose_driver.update(img)
             self.semgcm_driver.update(self.mmpose_driver)
 
+            self.semgcm_driver.plotting()
+
             if self.args.cv_show:
                 drawimg = img
                 drawimg = self.mmpose_driver.render(drawimg)
@@ -104,6 +107,7 @@ class Application:
 
     def term(self):
         print("Exit Application.")
+        self.semgcm_driver.term()
         self.cap.release()
         cv2.destroyAllWindows()
 
@@ -277,6 +281,10 @@ class SemGCMDriver:
         self.last_3d_positions = None
         self.last_scores = None
         self.render_3d = args.sem_show_3d
+        self._plot = args.sem_plot
+        self._plot_initalized = False
+        self._plot_skeleton = None
+        self.last_3d_skeletons = None
 
         # Resume from a checkpoint
         ckpt_path = args.sem_evaluate
@@ -290,6 +298,26 @@ class SemGCMDriver:
             print("==> Loaded checkpoint (Epoch: {} | Error: {})".format(start_epoch, error_best))
         else:
             raise RuntimeError("==> No checkpoint found at '{}'".format(ckpt_path))
+
+        if self._plot:
+            size = 5
+            radius = 1
+            azim = 45
+            title = "test"
+            plt.ion()
+            fig = plt.figure(figsize=(size, size))
+            self._plot_ax = fig.add_subplot(1, 1 , 1, projection='3d')
+            self._plot_ax.view_init(elev=15., azim=azim)
+            self._plot_ax.set_xlim3d([-radius / 2, radius / 2])
+            self._plot_ax.set_zlim3d([0, radius])
+            self._plot_ax.set_ylim3d([-radius / 2, radius / 2])
+            self._plot_ax.set_aspect('auto')
+            self._plot_ax.set_xticklabels([])
+            self._plot_ax.set_yticklabels([])
+            self._plot_ax.set_zticklabels([])
+            self._plot_ax.dist = 7.5
+            self._plot_ax.set_title(title)  # , pad=35
+
         print("Initialize SemGCMDriver - end.")
 
     def update(self, mmpose):
@@ -302,24 +330,59 @@ class SemGCMDriver:
             result = self.model_pos(input2d).cpu()
             self.last_3d_positions.append(result)
 
+        self.last_3d_skeletons = []
+        for index, position in enumerate(self.last_3d_positions):
+            skeleton = []
+            for node, parent in enumerate(self.skeleton._parents):
+                if parent < 0:
+                    continue
+                n = [position[0][node][0], position[0][node][1], position[0][node][2]]
+                p = [position[0][parent][0], position[0][parent][1], position[0][parent][2]]
+                line = [n, p, [self.last_scores[index][node], self.last_scores[index][parent]]]
+                skeleton.append(line)
+            self.last_3d_skeletons.append(skeleton)
+
     def render(self, img):
         img = self.__render_3d(img)
         return img
 
+    def plotting(self):
+        if not self._plot:
+            return
+        if not self.last_3d_skeletons:
+            return
+
+        if not self._plot_skeleton:
+            for skeleton in self.last_3d_skeletons:
+                self._plot_skeleton = []
+                for line in skeleton:
+                    self._plot_skeleton.append( self._plot_ax.plot([line[0][0], line[1][0]], [line[0][1], line[1][1]], [line[0][2], line[1][2]], zdir='z', color    ='black'))
+                break
+            print(self._plot_skeleton)
+        else:
+            for si, skeleton in enumerate(self.last_3d_skeletons):
+                for li, line in enumerate(skeleton):
+                    self._plot_skeleton[li][0].set_xdata(np.array([line[0][0], line[1][0]]))
+                    self._plot_skeleton[li][0].set_ydata(np.array([line[0][1], line[1][1]]))
+                    self._plot_skeleton[li][0].set_3d_properties([line[0][2], line[1][2]], zdir='z')
+                break
+
+        plt.draw()
+        plt.pause(0.01)
+
     def __render_3d(self, img):
-        if self.render_3d and self.last_3d_positions:
-            for index, position in enumerate(self.last_3d_positions):
-                for node, parent in enumerate(self.skeleton._parents):
-                    if parent < 0:
-                        continue
+        if self.render_3d and self.last_3d_skeletons:
+            for skeleton in self.last_3d_skeletons:
+                for line in skeleton:
                     color = (255,0,0)
-                    if self.last_scores[index][node] > self.render_score_threshold and self.last_scores[index][parent] > self.render_score_threshold:
+                    if line[2][0] > self.render_score_threshold and line[2][1] > self.render_score_threshold:
                         color = (255,255,0)
-                    nx = position[0][node][0] * 100 + 100
-                    ny = position[0][node][1] * 100 + 100
-                    px = position[0][parent][0] * 100 + 100
-                    py = position[0][parent][1] * 100 + 100
+                    nx = line[0][0] * 100 + 100
+                    ny = line[0][1] * 100 + 100
+                    px = line[1][0] * 100 + 100
+                    py = line[1][1] * 100 + 100
                     cv2.line(img,(nx,ny),(px,py),color,1)
+                break
         return img
 
     def rename_nonlocal_node(self, dic):
@@ -335,6 +398,10 @@ class SemGCMDriver:
             value = dic.pop(key)
             key = key.replace('.nonlocal.','._nonlocal.')
             dic[key] = value
+
+    def term(self):
+        if self._plot:
+            plt.ioff()
 
 
 if __name__ == '__main__':
