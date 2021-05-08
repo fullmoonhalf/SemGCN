@@ -370,15 +370,21 @@ class SemGCMDriver:
             for skeleton in self.last_3d_skeletons:
                 self._plot_skeleton = []
                 for line in skeleton:
-                    self._plot_skeleton.append( self._plot_ax.plot([line[0][0], line[1][0]], [line[0][1], line[1][1]], [line[0][2], line[1][2]], zdir='z', color    ='black'))
+                    clr = '#a0a0a0'
+                    if line[2][0] > self.render_score_threshold and line[2][1] > self.render_score_threshold:
+                        clr = 'black'
+                    self._plot_skeleton.append( self._plot_ax.plot([line[0][0], line[1][0]], [line[0][1], line[1][1]], [line[0][2], line[1][2]], zdir='z', color=clr))
                 break
-            print(self._plot_skeleton)
         else:
             for si, skeleton in enumerate(self.last_3d_skeletons):
                 for li, line in enumerate(skeleton):
+                    clr = '#a0a0a0'
+                    if line[2][0] > self.render_score_threshold and line[2][1] > self.render_score_threshold:
+                        clr = 'black'
                     self._plot_skeleton[li][0].set_xdata(np.array([line[0][0], line[1][0]]))
                     self._plot_skeleton[li][0].set_ydata(np.array([line[0][1], line[1][1]]))
                     self._plot_skeleton[li][0].set_3d_properties([line[0][2], line[1][2]], zdir='z')
+                    self._plot_skeleton[li][0].set_color(clr)
                 break
 
         plt.draw()
