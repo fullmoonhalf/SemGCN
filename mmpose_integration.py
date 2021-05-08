@@ -5,6 +5,7 @@ import torch
 import os.path as path
 import numpy as np
 import matplotlib.pyplot as plt
+import sys
 
 from mmdet.apis import inference_detector, init_detector
 from mmpose.apis import inference_top_down_pose_model, init_pose_model, vis_pose_result
@@ -182,15 +183,11 @@ class MMPoseDriver:
         self.last_converted_results = []
         self.last_scores = []
         for index in range(population):
-            bbox = self.last_pose_results[index]['bbox']
-            cx = (bbox[0][2] + bbox[0][0]) / 2
-            cy = (bbox[0][3] + bbox[0][1]) / 2
-            width = bbox[0][2] - bbox[0][0] / 2
-            height = bbox[0][3] - bbox[0][1] / 2    
             keypoint = self.last_pose_results[index]['keypoints']
             rawret = []
-            result = []
             scores = []
+            minpos = [sys.float_info.max, sys.float_info.max]
+            maxpos = [-sys.float_info.max, -sys.float_info.max]
             for cl in self.coco_to_sem:
                 rawpt = [0.0, 0.0]
                 score = 0
@@ -201,13 +198,26 @@ class MMPoseDriver:
                 cn = len(cl)
                 rawpt[0] = rawpt[0] / cn
                 rawpt[1] = rawpt[1] / cn
-                point = [0.0, 0.0]
-                point[0] = ((rawpt[0] / cn) - cx) / width
-                point[1] = ((rawpt[1] / cn) - cy) / height
                 score = score / cn
                 rawret.append(rawpt)
-                result.append(point)
                 scores.append(score)
+                minpos[0] = min(rawpt[0], minpos[0])
+                minpos[1] = min(rawpt[1], minpos[1])
+                maxpos[0] = max(rawpt[0], maxpos[0])
+                maxpos[1] = max(rawpt[1], maxpos[1])
+            
+            cx = (maxpos[0] + minpos[0]) / 2
+            cy = (maxpos[1] + minpos[1]) / 2
+            width = (maxpos[0] - minpos[0]) / 2
+            height = (maxpos[1] - minpos[1]) / 2
+            scale = max(width, height)
+            result = []
+            for rawpt in rawret:
+                point = [0.0, 0.0]
+                point[0] = (rawpt[0] - cx) / scale
+                point[1] = (rawpt[1] - cy) / scale
+                result.append(point)
+
             result = torch.tensor(result).float().to(self.device.device)
             self.last_raw_results.append(rawret)
             self.last_converted_results.append(result)
@@ -238,13 +248,17 @@ class MMPoseDriver:
                     if parent < 0:
                         continue
                     color = (255,0,0)
+                    trustable = False
                     if self.last_scores[index][node] > self.render_score_threshold and self.last_scores[index][parent] > self.render_score_threshold:
                         color = (255,255,0)
+                        trustable = True
                     nx = int(position[node][0])
                     ny = int(position[node][1])
                     px = int(position[parent][0])
                     py = int(position[parent][1])
                     cv2.line(img,(nx,ny),(px,py),color,1)
+                    if trustable:
+                        cv2.putText(img, "{}".format(node), (nx, ny), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0,0,255), 1, cv2.LINE_AA)
         return img
 
     def getLastPoseResult(self):
