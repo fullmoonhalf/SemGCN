@@ -22,7 +22,7 @@ REM
 SET SEM_EVALUATE=checkpoint/pretrained/ckpt_semgcn_nonlocal.pth.tar 
 SET OPTSEM=--sem-evaluate %SEM_EVALUATE%
 
-SET VIZOPT=--sem-show-3d --mmp-show-2d --sem-plot
+SET VIZOPT=--mmp-show-2d --sem-plot --privacy 80
 
 
 REM

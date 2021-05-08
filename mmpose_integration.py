@@ -37,6 +37,7 @@ def parse_args():
 
     parser.add_argument('--device', default='cuda:0', help='Device used for inference')
     parser.add_argument('--render-score-threshold', type=float, default=0.5)
+    parser.add_argument('--privacy', type=int)
 
     args = parser.parse_args()
     return args
@@ -160,6 +161,7 @@ class MMPoseDriver:
         self.render_2d = args.mmp_show_2d
         self.skeleton = skeleton
         self.render_score_threshold = args.render_score_threshold
+        self.privacy = args.privacy
         print("Initialize MMPoseDriver - end.")
 
     def update(self, img):
@@ -256,6 +258,10 @@ class MMPoseDriver:
                     ny = int(position[node][1])
                     px = int(position[parent][0])
                     py = int(position[parent][1])
+                    if node == 9 and self.privacy:
+                        x = int(position[node][0])
+                        y = int(position[node][1])
+                        img = cv2.circle(img,(x,y), self.privacy, (190,190,190), -1)
                     cv2.line(img,(nx,ny),(px,py),color,1)
                     if trustable:
                         cv2.putText(img, "{}".format(node), (nx, ny), cv2.FONT_HERSHEY_SIMPLEX, 0.3, (0,0,255), 1, cv2.LINE_AA)
@@ -382,8 +388,8 @@ class SemGCMDriver:
                     if line[2][0] > self.render_score_threshold and line[2][1] > self.render_score_threshold:
                         clr = 'black'
                     self._plot_skeleton[li][0].set_xdata(np.array([line[0][0], line[1][0]]))
-                    self._plot_skeleton[li][0].set_ydata(np.array([line[0][1], line[1][1]]))
-                    self._plot_skeleton[li][0].set_3d_properties([line[0][2], line[1][2]], zdir='z')
+                    self._plot_skeleton[li][0].set_ydata(np.array([line[0][2], line[1][2]]))
+                    self._plot_skeleton[li][0].set_3d_properties([line[0][1], line[1][1]], zdir='z')
                     self._plot_skeleton[li][0].set_color(clr)
                 break
 
